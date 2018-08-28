@@ -61,7 +61,9 @@ class ExchangeMatrix:
         self.currencies_by_index = currencies_by_index
         self.indices_by_currency = indices_by_currency
         self.dok = dok_matrix
-        self.csr = dok_matrix.tocsr()
+        csr = dok_matrix.tocsr()
+        csr.data = -np.log10(csr.data)
+        self.csr = csr
 
     def _get_currency_index(self, currency, currency_count, currencies_by_index: dict, indices_by_currency: dict, ):
         if currency in indices_by_currency:
