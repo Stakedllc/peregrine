@@ -22,7 +22,7 @@ def bellman_ford(csgraph, directed=True, indices=None,
     Parameters
     ----------
     csgraph : array, matrix, or sparse matrix, 2 dimensions
-        The N x N array of distances representing the input graph.
+        The num_nodes x num_nodes array of distances representing the input graph.
     directed : bool, optional
         If True (default), then find the shortest path on a directed graph:
         only move from point i to point j along paths csgraph[i, j].
@@ -33,7 +33,7 @@ def bellman_ford(csgraph, directed=True, indices=None,
         if specified, only compute the paths for the points at the given
         indices.
     return_predecessors : bool, optional
-        If True, return the size (N, N) predecesor matrix
+        If True, return the size (num_nodes, num_nodes) predecesor matrix
     unweighted : bool, optional
         If True, then find unweighted distances.  That is, rather than finding
         the path between each point such that the sum of weights is minimized,
@@ -41,11 +41,13 @@ def bellman_ford(csgraph, directed=True, indices=None,
     Returns
     -------
     dist_matrix : ndarray
-        The N x N matrix of distances between graph nodes. dist_matrix[i,j]
+        The num_nodes x num_nodes matrix of distances between graph nodes. dist_matrix[i,j]
         gives the shortest distance from point i to point j along the graph.
+    neg_cycle_ind : np.int32_t
+        The index which is in a negative cycle. -1 if no negative cycle exists.
     predecessors : ndarray
         Returned only if return_predecessors == True.
-        The N x N matrix of predecessors, which can be used to reconstruct
+        The num_nodes x num_nodes matrix of predecessors, which can be used to reconstruct
         the shortest paths.  Row i of the predecessor matrix contains
         information on the shortest paths from point i: each entry
         predecessors[i, j] gives the index of the previous node in the
@@ -83,33 +85,33 @@ def bellman_ford(csgraph, directed=True, indices=None,
     # validate csgraph and convert to csr matrix
     csgraph = validate_graph(csgraph, directed, DTYPE,
                              dense_output=False)
-    N = csgraph.shape[0]
+    num_nodes = csgraph.shape[0]
 
     #------------------------------
-    # intitialize/validate indices
+    # initialize/validate indices
     if indices is None:
-        indices = np.arange(N, dtype=ITYPE)
+        indices = np.arange(num_nodes, dtype=ITYPE)
     else:
         indices = np.array(indices, order='C', dtype=ITYPE)
-        indices[indices < 0] += N
-        if np.any(indices < 0) or np.any(indices >= N):
-            raise ValueError("indices out of range 0...N")
-    return_shape = indices.shape + (N,)
+        indices[indices < 0] += num_nodes
+        if np.any(indices < 0) or np.any(indices >= num_nodes):
+            raise ValueError("indices out of range 0...num_nodes")
+    return_shape = indices.shape + (num_nodes,)
     indices = np.atleast_1d(indices).reshape(-1)
 
     #------------------------------
     # initialize dist_matrix for output
-    dist_matrix = np.empty((len(indices), N), dtype=DTYPE)
+    dist_matrix = np.empty((len(indices), num_nodes), dtype=DTYPE)
     dist_matrix.fill(np.inf)
     dist_matrix[np.arange(len(indices)), indices] = 0
 
     #------------------------------
     # initialize predecessors for output
     if return_predecessors:
-        predecessor_matrix = np.empty((len(indices), N), dtype=ITYPE)
+        predecessor_matrix = np.empty((len(indices), num_nodes), dtype=ITYPE)
         predecessor_matrix.fill(NULL_IDX)
     else:
-        predecessor_matrix = np.empty((0, N), dtype=ITYPE)
+        predecessor_matrix = np.empty((0, num_nodes), dtype=ITYPE)
 
     if unweighted:
         csr_data = np.ones(csgraph.data.shape)
@@ -117,63 +119,58 @@ def bellman_ford(csgraph, directed=True, indices=None,
         csr_data = csgraph.data
 
     if directed:
-        ret = _bellman_ford_directed(indices,
+        ret = bellman_ford_directed(indices,
                                      csr_data, csgraph.indices,
                                      csgraph.indptr,
                                      dist_matrix, predecessor_matrix)
     else:
         raise ValueError('This implementation of bellman_ford is only valid for directed graphs')
 
-    if ret >= 0:
-        # todo: negative cycle
-        pass
-        # raise NegativeCycleError("Negative cycle detected on node %i" % ret)
-
     if return_predecessors:
-        return (dist_matrix.reshape(return_shape),
-                predecessor_matrix.reshape(return_shape))
+        return dist_matrix.reshape(return_shape), ret, predecessor_matrix.reshape(return_shape)
     else:
-        return dist_matrix.reshape(return_shape)
+        return dist_matrix.reshape(return_shape), ret
 
 
-cdef int _bellman_ford_directed(
+cdef int bellman_ford_directed(
             np.ndarray[ITYPE_t, ndim=1, mode='c'] source_indices,
             np.ndarray[DTYPE_t, ndim=1, mode='c'] csr_weights,
             np.ndarray[ITYPE_t, ndim=1, mode='c'] csr_indices,
             np.ndarray[ITYPE_t, ndim=1, mode='c'] csr_indptr,
             np.ndarray[DTYPE_t, ndim=2, mode='c'] dist_matrix,
             np.ndarray[ITYPE_t, ndim=2, mode='c'] pred):
-    cdef unsigned int Nind = dist_matrix.shape[0]
-    cdef unsigned int N = dist_matrix.shape[1]
+    cdef unsigned int num_nodes = dist_matrix.shape[1]
     cdef unsigned int i, j, k, j_source, count
 
     cdef DTYPE_t d1, d2, w12
 
-    cdef int return_pred = (pred.size > 0)
+    # todo: take source_index as a parameter instead of source_indices, made dist_matrix a 1d array. it is currently
+    # todo: a 1 x num_nodes matrix.
+    cdef int i = 0
+    j_source = source_indices[i]
 
-    for i in range(Nind):
-        j_source = source_indices[i]
-
-        # relax all edges N-1 times
-        for count in range(N - 1):
-            # relax all edges for one iteration over N
-            for j in range(N):
-                d1 = dist_matrix[i, j]
-                for k in range(csr_indptr[j], csr_indptr[j + 1]):
-                    w12 = csr_weights[k]
-                    d2 = dist_matrix[i, csr_indices[k]]
-                    if d1 + w12 < d2:
-                        dist_matrix[i, csr_indices[k]] = d1 + w12
-                        if return_pred:
-                            pred[i, csr_indices[k]] = j
-
-        # check for negative-weight cycles
-        for j in range(N):
+    # relax all edges num_nodes-1 times
+    for count in range(num_nodes - 1):
+        # relax all edges for one iteration of count by iterating over each node, relaxing each edge it has
+        for j in range(num_nodes):
+            # d1 is the current distance from i to j
             d1 = dist_matrix[i, j]
+            # iterate over j's edges
             for k in range(csr_indptr[j], csr_indptr[j + 1]):
                 w12 = csr_weights[k]
+                # the current distance from i to k
                 d2 = dist_matrix[i, csr_indices[k]]
-                if d1 + w12 + DTYPE_EPS < d2:
-                    return j_source
+                if d1 + w12 < d2:
+                    dist_matrix[i, csr_indices[k]] = d1 + w12
+                    pred[i, csr_indices[k]] = j
+
+    # check for negative-weight cycles
+    for j in range(num_nodes):
+        d1 = dist_matrix[i, j]
+        for k in range(csr_indptr[j], csr_indptr[j + 1]):
+            w12 = csr_weights[k]
+            d2 = dist_matrix[i, csr_indices[k]]
+            if d1 + w12 + DTYPE_EPS < d2:
+                return j_source
 
     return -1

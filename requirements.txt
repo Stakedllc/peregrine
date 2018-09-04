@@ -1,3 +1,4 @@
+scipy
 tweepy
 git+git://github.com/wardbradt/networkx.git#egg=networkx
 numpy
