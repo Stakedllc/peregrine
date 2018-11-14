@@ -1,9 +1,9 @@
-import math
 import networkx as nx
 from .utils import last_index_in_list, FormatForLogAdapter
 import asyncio
 from .utils import load_exchange_graph
 import logging
+from decimal import Decimal
 __all__ = [
     'NegativeWeightFinder',
     'NegativeWeightDepthFinder',
@@ -42,7 +42,7 @@ class NegativeWeightFinder:
     def _set_basic_fields(self, node):
         # todo: change predecessor_to to a dict and get rid of loop_from_source
         # Initialize all distance_to values to infinity and all predecessor_to values to None
-        self.distance_to[node] = float('Inf')
+        self.distance_to[node] = Decimal('Inf')
         self.predecessor_to[node] = None
 
     def initialize(self, source):
@@ -50,7 +50,7 @@ class NegativeWeightFinder:
             self._set_basic_fields(node)
 
         # The distance from any node to (itself) == 0
-        self.distance_to[source] = 0
+        self.distance_to[source] = Decimal('0')
 
     def bellman_ford(self, source, unique_paths=True):
         """
@@ -209,19 +209,19 @@ def get_starting_volume(graph, path):
     volume_scalar = 1
     start = path[0]
     end = path[1]
-    initial_volume = math.exp(-graph[start][end]['depth'])
-    previous_volume = initial_volume * math.exp(-graph[start][end]['weight'])
+    initial_volume = (-graph[start][end]['depth']).exp()
+    previous_volume = (-graph[start][end]['weight']).exp()
     for i in range(1, len(path) - 1):
         start = path[i]
         end = path[i + 1]
-        current_max_volume = math.exp(-graph[start][end]['depth'])
+        current_max_volume = (-graph[start][end]['depth']).exp()
         if previous_volume > current_max_volume:
             volume_scalar *= current_max_volume / previous_volume
-        previous_volume *= math.exp(-graph[start][end]['weight'])
+        previous_volume *= (-graph[start][end]['weight']).exp()
     return initial_volume * volume_scalar
 
 
-def calculate_profit_ratio_for_path(graph, path, depth=False, starting_amount=1, gather_path_data=False):
+def calculate_profit_ratio_for_path(graph, path, depth=False, starting_amount=Decimal('1'), gather_path_data=False):
     """
     If gather_path_data, returns a two-tuple where the first element is the profit ratio for the given path and the
     second element is a dict keyed by market symbol and valued by a a dict with 'rate' and 'volume' keys, corresponding
@@ -238,8 +238,8 @@ def calculate_profit_ratio_for_path(graph, path, depth=False, starting_amount=1,
         end = path[i + 1]
         if depth:
             # volume and rate_with_fee are in terms of start, may be base or quote currency.
-            rate_with_fee = math.exp(-graph[start][end]['weight'])
-            volume = min(ratio, math.exp(-graph[start][end]['depth']))
+            rate_with_fee = (-graph[start][end]['weight']).exp()
+            volume = min(ratio, (-graph[start][end]['depth'])).exp()
             ratio = volume * rate_with_fee
 
             if gather_path_data:
@@ -256,7 +256,7 @@ def calculate_profit_ratio_for_path(graph, path, depth=False, starting_amount=1,
                                   # if start comes before end in path, this is a sell order.
                                   'order': 'SELL' if sell else 'BUY'})
         else:
-            ratio *= math.exp(-graph[start][end]['weight'])
+            ratio *= (-graph[start][end]['weight']).exp()
 
     adapter.info('Calculated profit ratio')
 
