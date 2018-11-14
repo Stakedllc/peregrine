@@ -7,6 +7,7 @@ import networkx as nx
 import math
 import random
 from ..utils import wss_add_market, wss_update_graph
+from decimal import Decimal
 
 
 def graph_from_dict(graph_dict):
@@ -52,8 +53,8 @@ def build_graph_from_edge_list(edges, fee):
     for edge in edges:
         sell = edge[4] == 'SELL'
         graph.add_edge(
-            edge[0], edge[1], weight=-math.log(edge[2] * (1 - fee)), depth=-math.log(edge[3]), trade_type=edge[4],
-            fee=fee, no_fee_rate=edge[2] if sell else 1 / edge[2],
+            edge[0], edge[1], weight=-(edge[2] * (Decimal('1') - fee)).ln(), depth=-edge[3].ln(), trade_type=edge[4],
+            fee=fee, no_fee_rate=edge[2] if sell else Decimal('1') / edge[2],
             market_name='{}/{}'.format(edge[0], edge[1]) if sell else '{}/{}'.format(edge[1], edge[0])
         )
 
@@ -86,37 +87,38 @@ class TestBellmannx(TestCase):
 
     def test_negative_weight_depth_finder(self):
         """
-        Tests NegativeWeightDepthFinder
+        Tests NegativeWeightDepthFinder. Assumes Yen's optimizations, which are currently not implemented. This
+        test should fail.
         """
-        final_edge_weight = 0.25
+        final_edge_weight = Decimal('0.25')
         edges = [
             # tail node, head node, no_fee_rate, depth (in terms of profited currency), trade_type
-            ['A', 'B', 2, 3, 'SELL'],
-            ['B', 'C', 3, 4, 'SELL'],
-            ['C', 'D', 1 / 7, 14, 'BUY'],
-            ['D', 'E', 0.2, 3 / 2, 'BUY'],
-            ['E', 'F', 4, 3, 'SELL'],
-            ['F', 'G', 6, 0.8, 'BUY'],
-            ['G', 'H', 0.75, 6, 'BUY'],
-            ['H', 'A', final_edge_weight, 20, 'BUY'],
+            ['A', 'B', Decimal('2'), Decimal('3'), 'SELL'],
+            ['B', 'C', Decimal('3'), Decimal('4'), 'SELL'],
+            ['C', 'D', Decimal('1') / Decimal('7'), Decimal('14'), 'BUY'],
+            ['D', 'E', Decimal('0.2'), Decimal('1.5'), 'BUY'],
+            ['E', 'F', Decimal('4'), Decimal('3'), 'SELL'],
+            ['F', 'G', Decimal('6'), Decimal('0.8'), 'BUY'],
+            ['G', 'H', Decimal('0.75'), Decimal('0.6'), 'BUY'],
+            ['H', 'A', final_edge_weight, Decimal('20'), 'BUY'],
         ]
-        fee = 0.01
+        fee = Decimal('0.01')
 
         # ratio for the rates from A -> H
         def get_edge_ratio():
-            constant_ratio = 1
+            constant_ratio = Decimal('1')
             for edge in edges:
-                constant_ratio *= edge[2] * (1 - fee)
+                constant_ratio *= edge[2] * (Decimal('1') - fee)
             return constant_ratio
 
         for i in range(10):
-            edges[-1][2] = final_edge_weight * (i + 1)
+            edges[-1][2] = final_edge_weight * (Decimal(i) + Decimal('1'))
             graph = build_graph_from_edge_list(edges, fee)
             finder = NegativeWeightDepthFinder(graph)
             paths = finder.bellman_ford('A')
 
             edge_ratio = get_edge_ratio()
-            if edge_ratio <= 1:
+            if edge_ratio <= Decimal('1'):
                 with self.assertRaises(StopIteration):
                     paths.__next__()
 
@@ -126,7 +128,7 @@ class TestBellmannx(TestCase):
                     paths.__next__()
 
                 ratio = calculate_profit_ratio_for_path(graph, path['loop'], depth=True,
-                                                        starting_amount=math.exp(-path['minimum']))
+                                                        starting_amount=(-path['minimum']).exp())
 
                 self.assertAlmostEqual(ratio, edge_ratio)
 
@@ -171,17 +173,17 @@ class TestBellmannx(TestCase):
         """Tests NegativeWeightDepthFinder as it is used in arbitrag"""
         symbols = ['BTC/USD', 'ETH/USD', 'ETH/BTC', 'LTC/BTC', 'LTC/USD', 'ETH/LTC', 'DRC/BTC', 'DRC/ETH']
         markets = {symbol: {
-            'volume_increment': 10 ** -8,
-            'price_increment': 10 ** -8,
-            'min_market_funds': 10 ** -16,
-            'taker_fee': 0.001,
-            'maker_fee': 0,
+            'volume_increment': Decimal('10') ** Decimal('-8'),
+            'price_increment': Decimal('10') ** Decimal('-8'),
+            'min_market_funds': Decimal('10') ** Decimal('-16'),
+            'taker_fee': Decimal('0.001'),
+            'maker_fee': Decimal('0'),
         } for symbol in symbols}
         graph = nx.DiGraph()
         [wss_add_market(graph, k, v) for k, v in markets.items()]
-        wss_update_graph(graph, 'BTC/USD', 'asks', 5000, 0.5)
-        wss_update_graph(graph, 'ETH/USD', 'bids', 500, 6)
-        wss_update_graph(graph, 'ETH/BTC', 'asks', 0.14, 8)
+        wss_update_graph(graph, 'BTC/USD', 'asks', Decimal('5000'), Decimal('0.5'))
+        wss_update_graph(graph, 'ETH/USD', 'bids', Decimal('500'), Decimal('6'))
+        wss_update_graph(graph, 'ETH/BTC', 'asks', Decimal('0.14'), Decimal('8'))
 
         nwdf = NegativeWeightDepthFinder(graph)
         paths = nwdf.bellman_ford('BTC')
@@ -190,15 +192,15 @@ class TestBellmannx(TestCase):
 
     def test_ratio(self):
         G = nx.DiGraph()
-        G.add_edge('A', 'B', weight=-math.log(2))
-        G.add_edge('B', 'C', weight=-math.log(3))
-        G.add_edge('C', 'A', weight=-math.log(1 / 4))
+        G.add_edge('A', 'B', weight=-Decimal('2').ln())
+        G.add_edge('B', 'C', weight=-Decimal('3').ln())
+        G.add_edge('C', 'A', weight=-(Decimal('1') / Decimal('4')).ln())
         paths = bellman_ford(G, 'A', unique_paths=True)
         path_count = 0
 
         for path in paths:
             path_count += 1
-            self.assertAlmostEqual(calculate_profit_ratio_for_path(G, path), 1.5)
+            self.assertEqual(calculate_profit_ratio_for_path(G, path), Decimal('1.5'))
 
         # assert that unique_paths allows for only one path
         self.assertEqual(path_count, 1)
