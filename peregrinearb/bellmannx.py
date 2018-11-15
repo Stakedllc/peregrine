@@ -239,7 +239,7 @@ def calculate_profit_ratio_for_path(graph, path, depth=False, starting_amount=De
         if depth:
             # volume and rate_with_fee are in terms of start, may be base or quote currency.
             rate_with_fee = (-graph[start][end]['weight']).exp()
-            volume = min(ratio, (-graph[start][end]['depth'])).exp()
+            volume = min(ratio, (-graph[start][end]['depth']).exp())
             ratio = volume * rate_with_fee
 
             if gather_path_data:
